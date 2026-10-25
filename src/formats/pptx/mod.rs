@@ -36,7 +36,7 @@ const SLIDE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/r
 
 /// Namespaces whose markup this frontend understands; `mc:Choice` branches
 /// requiring anything else fall back to `mc:Fallback`.
-const SUPPORTED_NS: &[&str] = &[ns::P, ns::A, ns::R, ns::MC, ns::A14];
+const SUPPORTED_NS: &[&str] = &[ns::P, ns::A, ns::R, ns::MC, ns::A14, ns::CHART, ns::DGM];
 
 struct LayoutInfo {
     placeholders: Vec<Placeholder>,

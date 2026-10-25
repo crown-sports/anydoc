@@ -9,6 +9,8 @@ const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const CHART: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const PAYLOAD: &str = "OLE payload, not an image";
 
@@ -43,7 +45,7 @@ fn presentation(shapes: &str) -> Document {
         r#"<Relationships xmlns="{RELS}"><Relationship Id="slide" Type="{R}/slide" Target="slides/slide1.xml"/></Relationships>"#
     );
     let slide = format!(
-        r#"<p:sld xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}" xmlns:mc="{MC}" xmlns:v="urn:schemas-microsoft-com:vml"><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"#
+        r#"<p:sld xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}" xmlns:mc="{MC}" xmlns:c="{CHART}" xmlns:dgm="{DGM}" xmlns:v="urn:schemas-microsoft-com:vml"><p:cSld><p:spTree>{shapes}</p:spTree></p:cSld></p:sld>"#
     );
     let slide_rels = format!(
         r#"<Relationships xmlns="{RELS}">
@@ -52,7 +54,15 @@ fn presentation(shapes: &str) -> Document {
         <Relationship Id="control" Type="{R}/image" Target="../media/control.png"/>
         <Relationship Id="rejected" Type="{R}/image" Target="../media/rejected.png"/>
         <Relationship Id="external" Type="{R}/image" Target="https://example.com/preview.png" TargetMode="External"/>
+        <Relationship Id="chart" Type="{R}/chart" Target="../charts/chart1.xml"/>
+        <Relationship Id="diagram" Type="{R}/diagramData" Target="../diagrams/data1.xml"/>
         </Relationships>"#
+    );
+    let chart = format!(
+        r#"<c:chartSpace xmlns:c="{CHART}" xmlns:a="{A}"><c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>Chart title</a:t></a:r></a:p></c:rich></c:tx></c:title></c:chart></c:chartSpace>"#
+    );
+    let diagram = format!(
+        r#"<dgm:dataModel xmlns:dgm="{DGM}" xmlns:a="{A}"><dgm:ptLst><dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>Diagram point</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst></dgm:dataModel>"#
     );
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, text) in [
@@ -64,6 +74,8 @@ fn presentation(shapes: &str) -> Document {
         ("ppt/media/preview.png", PREVIEW_PNG),
         ("ppt/media/control.png", CONTROL_PNG),
         ("ppt/media/rejected.png", REJECTED_PNG),
+        ("ppt/charts/chart1.xml", chart.as_bytes()),
+        ("ppt/diagrams/data1.xml", diagram.as_bytes()),
     ] {
         zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
         zip.write_all(text).unwrap();
@@ -252,4 +264,48 @@ fn unselected_table_cannot_hide_the_selected_ole_object() {
     let doc = presentation(&frame(&alternate("v", table, &ole(&picture("preview")))));
     assert_eq!(image_parts(&doc), ["ppt/media/preview.png"]);
     assert!(!doc.blocks.iter().any(|b| matches!(b, Block::Table(_))));
+}
+
+#[test]
+fn chart_namespace_is_supported_in_graphic_frame_choices() {
+    let chart = r#"<c:chart r:id="chart"/>"#;
+    for shapes in [
+        frame(&alternate("c", chart, &ole(&picture("rejected")))),
+        alternate("c", &frame(chart), &picture("rejected")),
+    ] {
+        let doc = presentation(&shapes);
+        assert!(images(&doc).is_empty(), "a supported chart must win over its fallback");
+        assert!(doc.blocks.iter().any(|block| matches!(
+            block,
+            Block::Paragraph(inlines) if inlines.iter().any(|inline| matches!(
+                inline, Inline::Text { text, .. } if text == "Chart title"
+            ))
+        )));
+    }
+}
+
+#[test]
+fn diagram_namespace_is_supported_in_graphic_frame_choices() {
+    let diagram = r#"<dgm:relIds r:dm="diagram"/>"#;
+    for shapes in [
+        frame(&alternate("dgm", diagram, &ole(&picture("rejected")))),
+        alternate("dgm", &frame(diagram), &picture("rejected")),
+    ] {
+        let doc = presentation(&shapes);
+        assert!(images(&doc).is_empty(), "a supported diagram must win over its fallback");
+        let list = doc
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::List(list) => Some(list),
+                _ => None,
+            })
+            .expect("diagram text retained as a list");
+        assert!(matches!(
+            &list.items[0].blocks[0],
+            Block::Paragraph(inlines) if inlines.iter().any(|inline| matches!(
+                inline, Inline::Text { text, .. } if text == "Diagram point"
+            ))
+        ));
+    }
 }
